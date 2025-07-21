@@ -53,7 +53,7 @@ async function connectDB() {
       const users = await usersCollection.find(filter).toArray();
       res.json(users);
     });
-    
+
 
     // GET /users/:email - get user by email (cleaner API for client)
     app.get("/users/:email", async (req, res) => {
@@ -110,6 +110,28 @@ async function connectDB() {
       const updatedUser = await usersCollection.findOne({ email });
       res.json(updatedUser);
     });
+
+
+    //Role check::
+    // GET /users/role-check/:email - Check user role (admin or user)
+    app.get("/users/role-check/:email", async (req, res) => {
+      const { email } = req.params;
+
+      try {
+        const user = await usersCollection.findOne({ email });
+
+        if (!user) {
+          return res.status(404).json({ message: "User not found" });
+        }
+
+        const role = user.role || "user"; // Default role is "user" if not set
+        res.json({ email, role });
+      } catch (err) {
+        console.error("Error checking user role:", err);
+        res.status(500).json({ message: "Internal server error" });
+      }
+    });
+
 
     // ======================
     // ✅ Health & Default
