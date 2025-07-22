@@ -2,7 +2,7 @@ const express = require("express");
 const cors = require("cors");
 const dotenv = require("dotenv");
 const helmet = require("helmet");
-const { MongoClient, ServerApiVersion } = require("mongodb");
+const { MongoClient, ServerApiVersion, ObjectId } = require("mongodb");
 
 // Load environment variables
 dotenv.config();
@@ -33,105 +33,194 @@ async function connectDB() {
     const db = client.db("nssbdDB");
     const usersCollection = db.collection("users");
 
-
-
     // ======================
     // ✅ USERS ROUTES
     // ======================
 
-    // GET /users?email=email@example.com
+    // GET /users - Get all users (admin only)
     app.get("/users", async (req, res) => {
-      const { email, isAdmin } = req.query;
-
-      if (email) {
-        const user = await usersCollection.findOne({ email });
-        if (!user) return res.status(404).json({ message: "User not found" });
-        return res.json(user);
-      }
-
-      const filter = isAdmin ? { isAdmin: true } : {};
-      const users = await usersCollection.find(filter).toArray();
-      res.json(users);
-    });
-
-
-    // GET /users/:email - get user by email (cleaner API for client)
-    app.get("/users/:email", async (req, res) => {
-      const { email } = req.params;
-      const user = await usersCollection.findOne({ email });
-      if (!user) return res.status(404).json({ message: "User not found" });
-      res.json(user);
-    });
-
-    // POST /users - create a new user
-    app.post("/users", async (req, res) => {
-      const user = req.body;
-      if (!user?.email) {
-        return res.status(400).json({ message: "Email is required" });
-      }
-
-      const existingUser = await usersCollection.findOne({ email: user.email });
-      if (existingUser) {
-        return res.status(400).json({ message: "User already exists" });
-      }
-
-      const result = await usersCollection.insertOne({
-        ...user,
-        isAdmin: user.isAdmin || false,
-        createdAt: new Date(),
-        updatedAt: new Date(),
-      });
-
-      const createdUser = await usersCollection.findOne({
-        _id: result.insertedId,
-      });
-      res.status(201).json(createdUser);
-    });
-
-    // PATCH /users/:email - update user data (e.g., role change)
-    app.patch("/users/:email", async (req, res) => {
-      const { email } = req.params;
-      const updateData = req.body;
-
-      const result = await usersCollection.updateOne(
-        { email },
-        {
-          $set: {
-            ...updateData,
-            updatedAt: new Date(),
-          },
-        }
-      );
-
-      if (result.matchedCount === 0) {
-        return res.status(404).json({ message: "User not found" });
-      }
-
-      const updatedUser = await usersCollection.findOne({ email });
-      res.json(updatedUser);
-    });
-
-
-    //Role check::
-    // GET /users/role-check/:email - Check user role (admin or user)
-    app.get("/users/role-check/:email", async (req, res) => {
-      const { email } = req.params;
-
       try {
+        const { email } = req.query;
+
+        if (!email) {
+          return res.status(400).json({ message: "Email parameter is required" });
+        }
+
+        // First check if requesting user is admin
+        const requestingUser = await usersCollection.findOne({ email });
+        
+        if (!requestingUser) {
+          return res.status(404).json({ message: "User not found" });
+        }
+
+        if (!requestingUser.isAdmin) {
+          return res.status(403).json({ message: "Unauthorized: Admin access required" });
+        }
+
+        // If admin, return all users (excluding sensitive fields)
+        const allUsers = await usersCollection.find({}).project({
+          password: 0,
+          firebaseUID: 0
+        }).toArray();
+
+        res.json(allUsers);
+      } catch (err) {
+        console.error("Error fetching users:", err);
+        res.status(500).json({ message: "Internal server error" });
+      }
+    });
+
+    // GET /users/:email - Get specific user by email
+    app.get("/users/:email", async (req, res) => {
+      try {
+        const { email } = req.params;
         const user = await usersCollection.findOne({ email });
 
         if (!user) {
           return res.status(404).json({ message: "User not found" });
         }
 
-        const role = user.role || "user"; // Default role is "user" if not set
-        res.json({ email, role });
+        // Remove sensitive fields before sending
+        const { password, firebaseUID, ...userData } = user;
+        res.json(userData);
+      } catch (err) {
+        console.error("Error fetching user:", err);
+        res.status(500).json({ message: "Internal server error" });
+      }
+    });
+
+    // POST /users - Create new user
+    app.post("/users", async (req, res) => {
+      try {
+        const user = req.body;
+        
+        if (!user?.email) {
+          return res.status(400).json({ message: "Email is required" });
+        }
+
+        const existingUser = await usersCollection.findOne({ email: user.email });
+        if (existingUser) {
+          return res.status(400).json({ message: "User already exists" });
+        }
+
+        const newUser = {
+          ...user,
+          isAdmin: user.isAdmin || false,
+          emailVerified: false,
+          createdAt: new Date(),
+          updatedAt: new Date(),
+          lastLogin: new Date()
+        };
+
+        const result = await usersCollection.insertOne(newUser);
+        const createdUser = await usersCollection.findOne({ _id: result.insertedId });
+
+        // Remove sensitive fields before sending
+        const { password, firebaseUID, ...userData } = createdUser;
+        res.status(201).json(userData);
+      } catch (err) {
+        console.error("Error creating user:", err);
+        res.status(500).json({ message: "Internal server error" });
+      }
+    });
+
+    // PATCH /users/:email - Update user data
+    app.patch("/users/:email", async (req, res) => {
+      try {
+        const { email } = req.params;
+        const updateData = req.body;
+
+        // Don't allow updating email or admin status through this endpoint
+        if (updateData.email || updateData.isAdmin) {
+          return res.status(403).json({ message: "Cannot update email or admin status through this endpoint" });
+        }
+
+        const result = await usersCollection.updateOne(
+          { email },
+          {
+            $set: {
+              ...updateData,
+              updatedAt: new Date()
+            }
+          }
+        );
+
+        if (result.matchedCount === 0) {
+          return res.status(404).json({ message: "User not found" });
+        }
+
+        const updatedUser = await usersCollection.findOne({ email });
+        
+        // Remove sensitive fields before sending
+        const { password, firebaseUID, ...userData } = updatedUser;
+        res.json(userData);
+      } catch (err) {
+        console.error("Error updating user:", err);
+        res.status(500).json({ message: "Internal server error" });
+      }
+    });
+
+    // PATCH /users/admin/:id - Update admin status (admin only)
+    app.patch("/users/admin/:id", async (req, res) => {
+      try {
+        const { id } = req.params;
+        const { isAdmin, requestingAdminEmail } = req.body;
+
+        if (typeof isAdmin !== 'boolean') {
+          return res.status(400).json({ message: "isAdmin must be boolean" });
+        }
+
+        // Verify requesting user is admin
+        const adminUser = await usersCollection.findOne({ email: requestingAdminEmail });
+        if (!adminUser || !adminUser.isAdmin) {
+          return res.status(403).json({ message: "Admin privileges required" });
+        }
+
+        const result = await usersCollection.updateOne(
+          { _id: new ObjectId(id) },
+          {
+            $set: {
+              isAdmin,
+              updatedAt: new Date()
+            }
+          }
+        );
+
+        if (result.matchedCount === 0) {
+          return res.status(404).json({ message: "User not found" });
+        }
+
+        const updatedUser = await usersCollection.findOne({ _id: new ObjectId(id) });
+        
+        // Remove sensitive fields before sending
+        const { password, firebaseUID, ...userData } = updatedUser;
+        res.json(userData);
+      } catch (err) {
+        console.error("Error updating admin status:", err);
+        res.status(500).json({ message: "Internal server error" });
+      }
+    });
+
+    // GET /users/role-check/:email - Check user role
+    app.get("/users/role-check/:email", async (req, res) => {
+      try {
+        const { email } = req.params;
+        const user = await usersCollection.findOne({ email });
+
+        if (!user) {
+          return res.status(404).json({ message: "User not found" });
+        }
+
+        res.json({
+          email: user.email,
+          isAdmin: user.isAdmin || false,
+          role: user.role || "user"
+        });
       } catch (err) {
         console.error("Error checking user role:", err);
         res.status(500).json({ message: "Internal server error" });
       }
     });
-
 
     // ======================
     // ✅ Health & Default
@@ -139,15 +228,20 @@ async function connectDB() {
     app.get("/", (_req, res) => res.send("🚀 NSS Server is running"));
 
     app.get("/health", async (_req, res) => {
-      const admin = client.db("admin");
-      const info = await admin.command({ serverStatus: 1 });
-      res.json({
-        status: "ok",
-        time: new Date(),
-        uptime: process.uptime(),
-        mongoOk: info.ok === 1,
-        mongoHost: info.host,
-      });
+      try {
+        const admin = client.db("admin");
+        const info = await admin.command({ serverStatus: 1 });
+        res.json({
+          status: "ok",
+          time: new Date(),
+          uptime: process.uptime(),
+          mongoOk: info.ok === 1,
+          mongoHost: info.host,
+        });
+      } catch (err) {
+        console.error("Health check failed:", err);
+        res.status(500).json({ status: "error", message: "Database connection failed" });
+      }
     });
 
     // Start server
@@ -162,9 +256,7 @@ async function connectDB() {
 
 connectDB().catch(console.dir);
 
-// ========================
-// 👋 Graceful Shutdown
-// ========================
+// Graceful Shutdown
 ["SIGINT", "SIGTERM"].forEach((signal) =>
   process.on(signal, async () => {
     console.log(`👋 Received ${signal}, closing MongoDB connection`);
