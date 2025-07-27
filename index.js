@@ -32,6 +32,7 @@ async function connectDB() {
 
     const db = client.db("nssbdDB");
     const usersCollection = db.collection("users");
+    const usersMessagesCollection = db.collection("usersMessages");
 
     // ======================
     // ✅ USERS ROUTES
@@ -48,7 +49,7 @@ async function connectDB() {
 
         // First check if requesting user is admin
         const requestingUser = await usersCollection.findOne({ email });
-        
+
         if (!requestingUser) {
           return res.status(404).json({ message: "User not found" });
         }
@@ -93,7 +94,7 @@ async function connectDB() {
     app.post("/users", async (req, res) => {
       try {
         const user = req.body;
-        
+
         if (!user?.email) {
           return res.status(400).json({ message: "Email is required" });
         }
@@ -150,7 +151,7 @@ async function connectDB() {
         }
 
         const updatedUser = await usersCollection.findOne({ email });
-        
+
         // Remove sensitive fields before sending
         const { password, firebaseUID, ...userData } = updatedUser;
         res.json(userData);
@@ -191,7 +192,7 @@ async function connectDB() {
         }
 
         const updatedUser = await usersCollection.findOne({ _id: new ObjectId(id) });
-        
+
         // Remove sensitive fields before sending
         const { password, firebaseUID, ...userData } = updatedUser;
         res.json(userData);
@@ -221,6 +222,187 @@ async function connectDB() {
         res.status(500).json({ message: "Internal server error" });
       }
     });
+
+
+    // ======================
+    // Posting users messages function
+    // ======================
+
+    // POST /users-message - Save user message from contact form
+    app.post("/users-message", async (req, res) => {
+      try {
+        const { name, email, phone, message, userId, userEmail } = req.body;
+
+        // Basic validation
+        if (!name || !email || !message) {
+          return res.status(400).json({
+            success: false,
+            message: "Name, email and message are required fields"
+          });
+        }
+
+        // Validate email format
+        const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+        if (!emailRegex.test(email)) {
+          return res.status(400).json({
+            success: false,
+            message: "Please provide a valid email address"
+          });
+        }
+
+        // Create new message document
+        const newMessage = {
+          name,
+          email,
+          phone: phone || null,
+          message,
+          userId: userId || null,
+          userEmail: userEmail || email, // Use provided userEmail or fallback to form email
+          status: "new", // new, in-progress, resolved
+          createdAt: new Date(),
+          updatedAt: new Date(),
+          isRead: false
+        };
+
+        // Insert into MongoDB
+        const result = await usersMessagesCollection.insertOne(newMessage);
+
+        if (result.acknowledged) {
+          return res.status(201).json({
+            success: true,
+            message: "Thank you for your message! We'll get back to you soon.",
+            data: {
+              id: result.insertedId,
+              ...newMessage
+            }
+          });
+        } else {
+          throw new Error("Failed to save message");
+        }
+      } catch (err) {
+        console.error("Error saving user message:", err);
+        res.status(500).json({
+          success: false,
+          message: "Failed to submit your message. Please try again later."
+        });
+      }
+    });
+
+    // GET /all-users-messages - Get all messages (admin only)
+    app.get("/all-users-messages", async (req, res) => {
+      try {
+        const { email } = req.query;
+
+        if (!email) {
+          return res.status(400).json({ message: "Email parameter is required" });
+        }
+
+        // Verify requesting user is admin
+        const requestingUser = await usersCollection.findOne({ email });
+        if (!requestingUser || !requestingUser.isAdmin) {
+          return res.status(403).json({ message: "Admin access required" });
+        }
+
+        // Get all messages sorted by newest first
+        const messages = await usersMessagesCollection.find({})
+          .sort({ createdAt: -1 })
+          .toArray();
+
+        res.json({
+          success: true,
+          count: messages.length,
+          data: messages
+        });
+      } catch (err) {
+        console.error("Error fetching messages:", err);
+        res.status(500).json({ message: "Internal server error" });
+      }
+    });
+
+    // PATCH /users-messages/:id - Update message status or isRead (admin only)
+    app.patch("/users-messages/:id", async (req, res) => {
+      try {
+        const { id } = req.params;
+        const { status, isRead, adminEmail } = req.body;
+
+        if (!adminEmail) {
+          return res.status(400).json({ message: "Admin email is required" });
+        }
+
+        // Verify if the requester is an admin
+        const adminUser = await usersCollection.findOne({ email: adminEmail });
+        if (!adminUser || !adminUser.isAdmin) {
+          return res.status(403).json({ message: "Admin privileges required" });
+        }
+
+        // Build dynamic update object
+        const updateData = {
+          updatedAt: new Date()
+        };
+
+        if (status && typeof status === "string") updateData.status = status;
+        if (typeof isRead === "boolean") updateData.isRead = isRead;
+
+        // If no fields are provided to update
+        if (!("status" in req.body || "isRead" in req.body)) {
+          return res.status(400).json({ message: "No valid update fields provided" });
+        }
+
+        const result = await usersMessagesCollection.updateOne(
+          { _id: new ObjectId(id) },
+          { $set: updateData }
+        );
+
+        if (result.matchedCount === 0) {
+          return res.status(404).json({ message: "Message not found" });
+        }
+
+        const updatedMessage = await usersMessagesCollection.findOne({ _id: new ObjectId(id) });
+
+        res.json({
+          success: true,
+          message: "Message updated successfully",
+          data: updatedMessage
+        });
+
+      } catch (err) {
+        console.error("Error updating message:", err);
+        res.status(500).json({ message: "Internal server error" });
+      }
+    });
+
+
+    //Need users message by user email::
+    app.get("/users-messages/:userEmail", async (req, res) => {
+      try {
+        const { userEmail } = req.params;
+
+        // Validate email format
+        const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+        if (!emailRegex.test(userEmail)) {
+          return res.status(400).json({
+            success: false,
+            message: "Please provide a valid email address"
+          });
+        }
+
+        // Find messages by user email
+        const messages = await usersMessagesCollection.find({ userEmail })
+          .sort({ createdAt: -1 })
+          .toArray();
+
+        res.json({
+          success: true,
+          count: messages.length,
+          data: messages
+        });
+      } catch (err) {
+        console.error("Error fetching user messages:", err);
+        res.status(500).json({ message: "Internal server error" });
+      }
+    });
+
+
 
     // ======================
     // ✅ Health & Default
