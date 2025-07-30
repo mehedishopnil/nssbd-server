@@ -290,34 +290,33 @@ async function connectDB() {
 
     // GET /all-users-messages - Get all messages (admin only)
     app.get("/all-users-messages", async (req, res) => {
-      try {
-        const { email } = req.query;
+  try {
+    const { email } = req.query;
 
-        if (!email) {
-          return res.status(400).json({ message: "Email parameter is required" });
-        }
+    if (!email) {
+      return res.status(400).json({ message: "Email parameter is required" });
+    }
 
-        // Verify requesting user is admin
-        const requestingUser = await usersCollection.findOne({ email });
-        if (!requestingUser || !requestingUser.isAdmin) {
-          return res.status(403).json({ message: "Admin access required" });
-        }
+    const requestingUser = await usersCollection.findOne({ email });
+    if (!requestingUser || !requestingUser.isAdmin) {
+      return res.status(403).json({ message: "Admin access required" });
+    }
 
-        // Get all messages sorted by newest first
-        const messages = await usersMessagesCollection.find({})
-          .sort({ createdAt: -1 })
-          .toArray();
+    const messages = await usersMessagesCollection.find({})
+      .sort({ createdAt: -1 })
+      .toArray();
 
-        res.json({
-          success: true,
-          count: messages.length,
-          data: messages
-        });
-      } catch (err) {
-        console.error("Error fetching messages:", err);
-        res.status(500).json({ message: "Internal server error" });
-      }
+    res.json({
+      success: true,
+      count: messages.length,
+      data: messages
     });
+  } catch (err) {
+    console.error("Error fetching messages:", err);
+    res.status(500).json({ message: "Internal server error" });
+  }
+});
+
 
     // PATCH /users-messages/:id - Update message status or isRead (admin only)
     app.patch("/users-messages/:id", async (req, res) => {
