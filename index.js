@@ -16,7 +16,7 @@ app.use(helmet());
 app.use(express.json());
 
 
-const uri = `mongodb+srv://${process.env.DB_USER}:${process.env.DB_PASS}@projectdata.7tbgj12.mongodb.net/?retryWrites=true&w=majority&appName=ProjectData`;
+const uri = `mongodb+srv://${process.env.DB_USER}:${process.env.DB_PASS}@projectdata.7tbgj12.mongodb.net/?retryWrites=true&w=majority&ssl=true&appName=ProjectData`;
 
 
 const client = new MongoClient(uri, {
@@ -438,27 +438,6 @@ async function connectDB() {
       }
     });
 
-    // GET /guards/:id - get single guard by id (admin only)
-    app.get("/guards/:id", async (req, res) => {
-      try {
-        const { id } = req.params;
-        const { email: adminEmail } = req.query;
-        const verification = await verifyAdmin(adminEmail);
-        if (!verification.ok) {
-          return res.status(verification.status).json({ message: verification.message });
-        }
-
-        const guard = await guardsCollection.findOne({ _id: new ObjectId(id) });
-        if (!guard) {
-          return res.status(404).json({ message: "Guard not found" });
-        }
-
-        res.json({ success: true, data: guard });
-      } catch (err) {
-        console.error("Error fetching guard:", err);
-        res.status(500).json({ message: "Internal server error" });
-      }
-    });
 
     // POST /guards - create new guard (admin only)
     app.post("/guards", async (req, res) => {
@@ -631,50 +610,7 @@ async function connectDB() {
       }
     });
 
-    // GET /guards/:id/transactions - get transaction history (admin only)
-    app.get("/guards/:id/transactions", async (req, res) => {
-      try {
-        const { id } = req.params;
-        const { email: adminEmail } = req.query;
-        const verification = await verifyAdmin(adminEmail);
-        if (!verification.ok) return res.status(verification.status).json({ message: verification.message });
 
-        const guard = await guardsCollection.findOne(
-          { _id: new ObjectId(id) },
-          { projection: { transactions: 1 } }
-        );
-        if (!guard) return res.status(404).json({ message: "Guard not found" });
-
-        res.json({ success: true, data: guard.transactions || [] });
-      } catch (err) {
-        console.error("Error fetching transactions:", err);
-        res.status(500).json({ message: "Internal server error" });
-      }
-    });
-
-    // GET /guards/:id/presence - get presence history (admin only)
-    app.get("/guards/:id/presence", async (req, res) => {
-      try {
-        const { id } = req.params;
-        const { email: adminEmail } = req.query;
-        const verification = await verifyAdmin(adminEmail);
-        if (!verification.ok) return res.status(verification.status).json({ message: verification.message });
-
-        const guard = await guardsCollection.findOne(
-          { _id: new ObjectId(id) },
-          { projection: { presence: 1 } }
-        );
-        if (!guard) return res.status(404).json({ message: "Guard not found" });
-
-        res.json({ success: true, data: guard.presence || [] });
-      } catch (err) {
-        console.error("Error fetching presence:", err);
-        res.status(500).json({ message: "Internal server error" });
-      }
-    });
-
-
-   
 
   
 
