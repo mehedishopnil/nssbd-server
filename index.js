@@ -15,7 +15,9 @@ app.use(cors());
 app.use(helmet());
 app.use(express.json());
 
+
 const uri = `mongodb+srv://${process.env.DB_USER}:${process.env.DB_PASS}@projectdata.7tbgj12.mongodb.net/?retryWrites=true&w=majority&appName=ProjectData`;
+
 
 const client = new MongoClient(uri, {
   serverApi: {
@@ -33,6 +35,7 @@ async function connectDB() {
     const db = client.db("nssbdDB");
     const usersCollection = db.collection("users");
     const usersMessagesCollection = db.collection("usersMessages");
+    const guardsCollection = db.collection("guards")
 
     // ======================
     // ✅ USERS ROUTES
@@ -225,7 +228,7 @@ async function connectDB() {
 
 
     // ======================
-    // Posting users messages function
+    // users messages function
     // ======================
 
     // POST /users-message - Save user message from contact form
@@ -319,57 +322,56 @@ async function connectDB() {
 
 
     // PATCH /users-messages/:id - Update message status or isRead (admin only)
-app.patch("/users-messages/:id", async (req, res) => {
-  try {
-    const { id } = req.params;
-    const { status, isRead, email } = req.body;
+    app.patch("/users-messages/:id", async (req, res) => {
+      try {
+        const { id } = req.params;
+        const { status, isRead, email } = req.body;
 
-    if (!email) {
-      return res.status(400).json({ message: "Admin email is required" });
-    }
+        if (!email) {
+          return res.status(400).json({ message: "Admin email is required" });
+        }
 
-    // Verify if the requester is an admin
-    const adminUser = await usersCollection.findOne({ email });
-    if (!adminUser || !adminUser.isAdmin) {
-      return res.status(403).json({ message: "Admin privileges required" });
-    }
+        // Verify if the requester is an admin
+        const adminUser = await usersCollection.findOne({ email });
+        if (!adminUser || !adminUser.isAdmin) {
+          return res.status(403).json({ message: "Admin privileges required" });
+        }
 
-    // Build dynamic update object
-    const updateData = {
-      updatedAt: new Date()
-    };
+        // Build dynamic update object
+        const updateData = {
+          updatedAt: new Date()
+        };
 
-    if (status && typeof status === "string") updateData.status = status;
-    if (typeof isRead === "boolean") updateData.isRead = isRead;
+        if (status && typeof status === "string") updateData.status = status;
+        if (typeof isRead === "boolean") updateData.isRead = isRead;
 
-    // If no fields are provided to update
-    if (status === undefined && isRead === undefined) {
-      return res.status(400).json({ message: "No valid update fields provided" });
-    }
+        // If no fields are provided to update
+        if (status === undefined && isRead === undefined) {
+          return res.status(400).json({ message: "No valid update fields provided" });
+        }
 
-    const result = await usersMessagesCollection.updateOne(
-      { _id: new ObjectId(id) },
-      { $set: updateData }
-    );
+        const result = await usersMessagesCollection.updateOne(
+          { _id: new ObjectId(id) },
+          { $set: updateData }
+        );
 
-    if (result.matchedCount === 0) {
-      return res.status(404).json({ message: "Message not found" });
-    }
+        if (result.matchedCount === 0) {
+          return res.status(404).json({ message: "Message not found" });
+        }
 
-    const updatedMessage = await usersMessagesCollection.findOne({ _id: new ObjectId(id) });
+        const updatedMessage = await usersMessagesCollection.findOne({ _id: new ObjectId(id) });
 
-    res.json({
-      success: true,
-      message: "Message updated successfully",
-      data: updatedMessage
+        res.json({
+          success: true,
+          message: "Message updated successfully",
+          data: updatedMessage
+        });
+
+      } catch (err) {
+        console.error("Error updating message:", err);
+        res.status(500).json({ message: "Internal server error" });
+      }
     });
-
-  } catch (err) {
-    console.error("Error updating message:", err);
-    res.status(500).json({ message: "Internal server error" });
-  }
-});
-
 
 
     //Need users message by user email::
@@ -402,6 +404,279 @@ app.patch("/users-messages/:id", async (req, res) => {
       }
     });
 
+
+  // ======================
+    // ✅ Guards Data Function (admin only)
+    // ======================
+
+    // Helper to verify admin privileges from query param
+    async function verifyAdmin(email) {
+      if (!email) {
+        return { ok: false, status: 400, message: "Admin email query param is required" };
+      }
+      const adminUser = await usersCollection.findOne({ email });
+      if (!adminUser || !adminUser.isAdmin) {
+        return { ok: false, status: 403, message: "Admin privileges required" };
+      }
+      return { ok: true };
+    }
+
+     // GET /guards - list all guards (admin only)
+    app.get("/guards", async (req, res) => {
+      try {
+        const { email: adminEmail } = req.query;
+        const verification = await verifyAdmin(adminEmail);
+        if (!verification.ok) {
+          return res.status(verification.status).json({ message: verification.message });
+        }
+
+        const guards = await guardsCollection.find({}).toArray();
+        res.json({ success: true, count: guards.length, data: guards });
+      } catch (err) {
+        console.error("Error fetching guards:", err);
+        res.status(500).json({ message: "Internal server error" });
+      }
+    });
+
+    // GET /guards/:id - get single guard by id (admin only)
+    app.get("/guards/:id", async (req, res) => {
+      try {
+        const { id } = req.params;
+        const { email: adminEmail } = req.query;
+        const verification = await verifyAdmin(adminEmail);
+        if (!verification.ok) {
+          return res.status(verification.status).json({ message: verification.message });
+        }
+
+        const guard = await guardsCollection.findOne({ _id: new ObjectId(id) });
+        if (!guard) {
+          return res.status(404).json({ message: "Guard not found" });
+        }
+
+        res.json({ success: true, data: guard });
+      } catch (err) {
+        console.error("Error fetching guard:", err);
+        res.status(500).json({ message: "Internal server error" });
+      }
+    });
+
+    // POST /guards - create new guard (admin only)
+    app.post("/guards", async (req, res) => {
+      try {
+        const { email: adminEmail } = req.query;
+        const verification = await verifyAdmin(adminEmail);
+        if (!verification.ok) {
+          return res.status(verification.status).json({ message: verification.message });
+        }
+
+        const {
+          name,
+          phone,
+          nid,
+          address,
+          joinDate,
+          dutyPlace,
+          dutyTime,
+          initialTransactions = [],
+          initialPresence = [],
+        } = req.body;
+
+        if (!name || !phone || !nid || !dutyPlace || !dutyTime) {
+          return res.status(400).json({ message: "Required guard fields missing" });
+        }
+
+        const newGuard = {
+          name,
+          phone,
+          nid,
+          address: address || null,
+          joinDate: joinDate ? new Date(joinDate) : new Date(),
+          dutyPlace,
+          dutyTime,
+          transactions: Array.isArray(initialTransactions) ? initialTransactions.map(t => ({
+            type: t.type,
+            amount: t.amount,
+            date: t.date ? new Date(t.date) : new Date(),
+            note: t.note || null,
+          })) : [],
+          presence: Array.isArray(initialPresence) ? initialPresence.map(p => ({
+            date: p.date ? new Date(p.date) : new Date(),
+            status: p.status || "absent",
+          })) : [],
+          createdAt: new Date(),
+          updatedAt: new Date(),
+        };
+
+        const result = await guardsCollection.insertOne(newGuard);
+        const created = await guardsCollection.findOne({ _id: result.insertedId });
+
+        res.status(201).json({ success: true, data: created });
+      } catch (err) {
+        console.error("Error creating guard:", err);
+        res.status(500).json({ message: "Internal server error" });
+      }
+    });
+
+    // PATCH /guards/:id - update static guard info (admin only)
+    app.patch("/guards/:id", async (req, res) => {
+      try {
+        const { id } = req.params;
+        const { email: adminEmail } = req.query;
+        const verification = await verifyAdmin(adminEmail);
+        if (!verification.ok) {
+          return res.status(verification.status).json({ message: verification.message });
+        }
+
+        const updateFields = { ...req.body };
+        delete updateFields.transactions;
+        delete updateFields.presence; // Prevent mass overwrite here
+        updateFields.updatedAt = new Date();
+
+        const result = await guardsCollection.updateOne(
+          { _id: new ObjectId(id) },
+          { $set: updateFields }
+        );
+
+        if (result.matchedCount === 0) {
+          return res.status(404).json({ message: "Guard not found" });
+        }
+
+        const updatedGuard = await guardsCollection.findOne({ _id: new ObjectId(id) });
+        res.json({ success: true, data: updatedGuard });
+      } catch (err) {
+        console.error("Error updating guard:", err);
+        res.status(500).json({ message: "Internal server error" });
+      }
+    });
+
+    // POST /guards/:id/transactions - append a transaction (admin only)
+    app.post("/guards/:id/transactions", async (req, res) => {
+      try {
+        const { id } = req.params;
+        const { email: adminEmail } = req.query;
+        const verification = await verifyAdmin(adminEmail);
+        if (!verification.ok) {
+          return res.status(verification.status).json({ message: verification.message });
+        }
+
+        const { type, amount, date, note } = req.body;
+        if (!type || typeof amount !== "number") {
+          return res.status(400).json({ message: "Transaction type and numeric amount required" });
+        }
+
+        const transaction = {
+          type,
+          amount,
+          date: date ? new Date(date) : new Date(),
+          note: note || null,
+        };
+
+        const result = await guardsCollection.updateOne(
+          { _id: new ObjectId(id) },
+          {
+            $push: { transactions: transaction },
+            $set: { updatedAt: new Date() },
+          }
+        );
+
+        if (result.matchedCount === 0) {
+          return res.status(404).json({ message: "Guard not found" });
+        }
+
+        const updatedGuard = await guardsCollection.findOne({ _id: new ObjectId(id) });
+        res.json({ success: true, data: updatedGuard });
+      } catch (err) {
+        console.error("Error adding transaction:", err);
+        res.status(500).json({ message: "Internal server error" });
+      }
+    });
+
+    // POST /guards/:id/presence - append a presence entry (admin only)
+    app.post("/guards/:id/presence", async (req, res) => {
+      try {
+        const { id } = req.params;
+        const { email: adminEmail } = req.query;
+        const verification = await verifyAdmin(adminEmail);
+        if (!verification.ok) {
+          return res.status(verification.status).json({ message: verification.message });
+        }
+
+        const { date, status } = req.body;
+        if (!date || !status) {
+          return res.status(400).json({ message: "Date and status are required for presence" });
+        }
+
+        const presenceEntry = {
+          date: new Date(date),
+          status,
+        };
+
+        const result = await guardsCollection.updateOne(
+          { _id: new ObjectId(id) },
+          {
+            $push: { presence: presenceEntry },
+            $set: { updatedAt: new Date() },
+          }
+        );
+
+        if (result.matchedCount === 0) {
+          return res.status(404).json({ message: "Guard not found" });
+        }
+
+        const updatedGuard = await guardsCollection.findOne({ _id: new ObjectId(id) });
+        res.json({ success: true, data: updatedGuard });
+      } catch (err) {
+        console.error("Error adding presence:", err);
+        res.status(500).json({ message: "Internal server error" });
+      }
+    });
+
+    // GET /guards/:id/transactions - get transaction history (admin only)
+    app.get("/guards/:id/transactions", async (req, res) => {
+      try {
+        const { id } = req.params;
+        const { email: adminEmail } = req.query;
+        const verification = await verifyAdmin(adminEmail);
+        if (!verification.ok) return res.status(verification.status).json({ message: verification.message });
+
+        const guard = await guardsCollection.findOne(
+          { _id: new ObjectId(id) },
+          { projection: { transactions: 1 } }
+        );
+        if (!guard) return res.status(404).json({ message: "Guard not found" });
+
+        res.json({ success: true, data: guard.transactions || [] });
+      } catch (err) {
+        console.error("Error fetching transactions:", err);
+        res.status(500).json({ message: "Internal server error" });
+      }
+    });
+
+    // GET /guards/:id/presence - get presence history (admin only)
+    app.get("/guards/:id/presence", async (req, res) => {
+      try {
+        const { id } = req.params;
+        const { email: adminEmail } = req.query;
+        const verification = await verifyAdmin(adminEmail);
+        if (!verification.ok) return res.status(verification.status).json({ message: verification.message });
+
+        const guard = await guardsCollection.findOne(
+          { _id: new ObjectId(id) },
+          { projection: { presence: 1 } }
+        );
+        if (!guard) return res.status(404).json({ message: "Guard not found" });
+
+        res.json({ success: true, data: guard.presence || [] });
+      } catch (err) {
+        console.error("Error fetching presence:", err);
+        res.status(500).json({ message: "Internal server error" });
+      }
+    });
+
+
+   
+
+  
 
 
     // ======================
